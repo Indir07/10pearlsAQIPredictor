@@ -229,7 +229,25 @@ class FeatureStoreAdapter:
                 with open(model_path, "rb") as f:
                     models = pickle.load(f)
                     
-                metrics = hw_model.metrics
+                # In Hopsworks python SDK, metrics are stored in the training_metrics attribute of the Model object
+                raw_metrics = getattr(hw_model, "training_metrics", {}) or {}
+                
+                # Reconstruct the nested metrics dictionary for the Streamlit dashboard
+                metrics = {}
+                if raw_metrics:
+                    for horizon in ["1d", "2d", "3d"]:
+                        metrics[horizon] = {
+                            "model_name": "Tuned HistGradientBoosting (LightGBM)",
+                            "rmse": float(raw_metrics.get(f"{horizon}_rmse", 0.0)),
+                            "mae": float(raw_metrics.get(f"{horizon}_mae", 0.0)),
+                            "r2": float(raw_metrics.get(f"{horizon}_r2", 0.0)),
+                            "naive_comparison": {
+                                "rmse": float(raw_metrics.get(f"{horizon}_naive_rmse", 0.0)),
+                                "mae": float(raw_metrics.get(f"{horizon}_naive_mae", 0.0)),
+                                "r2": float(raw_metrics.get(f"{horizon}_naive_r2", 0.0))
+                            }
+                        }
+                    
                 print("Model loaded successfully from Hopsworks.")
                 return models, metrics
             except Exception as e:
