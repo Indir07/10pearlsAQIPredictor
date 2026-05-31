@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 from sklearn.model_selection import TimeSeriesSplit, GridSearchCV
 from sklearn.linear_model import Ridge
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.ensemble import RandomForestRegressor, HistGradientBoostingRegressor
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from config import FeatureStoreAdapter, MODEL_DIR
 
@@ -84,11 +84,40 @@ def run_training_pipeline():
         print(f"  [Naive Baseline Comparison] Persistence Forecast:")
         print(f"    RMSE = {naive_rmse:.2f}, MAE = {naive_mae:.2f}, R² = {naive_r2:.2f}")
         
-        # Define candidate models
+        # 1. Hyperparameter Tuning for Ridge Regression using GridSearchCV over Time-Series splits
+        print("  Running GridSearchCV for Ridge Regression...")
+        ridge_cv = GridSearchCV(
+            Ridge(),
+            {"alpha": [0.1, 1.0, 10.0, 100.0, 1000.0]},
+            cv=tscv,
+            scoring="neg_mean_squared_error"
+        )
+        ridge_cv.fit(X_train, y_train)
+        best_ridge = ridge_cv.best_estimator_
+        print(f"    -> Best Ridge Alpha: {ridge_cv.best_params_['alpha']}")
+        
+        # 2. Hyperparameter Tuning for HistGradientBoosting (LightGBM equivalent) using GridSearchCV
+        print("  Running GridSearchCV for HistGradientBoosting (LightGBM)...")
+        hgb_cv = GridSearchCV(
+            HistGradientBoostingRegressor(random_state=42),
+            {
+                "max_depth": [3, 5, 8],
+                "learning_rate": [0.01, 0.05, 0.1],
+                "max_iter": [50, 100]
+            },
+            cv=tscv,
+            scoring="neg_mean_squared_error",
+            n_jobs=-1
+        )
+        hgb_cv.fit(X_train, y_train)
+        best_hgb = hgb_cv.best_estimator_
+        print(f"    -> Best HistGradientBoosting Params: {hgb_cv.best_params_}")
+        
+        # Define candidate models with best tuned parameters
         candidates = {
-            "Ridge Regression": Ridge(alpha=1.0),
-            "Random Forest": RandomForestRegressor(n_estimators=100, max_depth=12, random_state=42, n_jobs=-1),
-            "Gradient Boosting": GradientBoostingRegressor(n_estimators=100, max_depth=5, random_state=42)
+            "Tuned Ridge Regression": best_ridge,
+            "Tuned HistGradientBoosting (LightGBM)": best_hgb,
+            "Random Forest": RandomForestRegressor(n_estimators=100, max_depth=12, random_state=42, n_jobs=-1)
         }
         
         best_r2 = -float("inf")
@@ -96,31 +125,15 @@ def run_training_pipeline():
         best_model = None
         best_model_metrics = {}
         
-        # Loop through models, perform cross-validation first, then fit on full train set
+        # Evaluate candidate models on the held-out test split
         for name, model in candidates.items():
-            cv_scores = []
-            
-            # Perform Time-Series Cross-Validation
-            for train_idx, val_idx in tscv.split(X_train):
-                cv_X_train, cv_X_val = X_train.iloc[train_idx], X_train.iloc[val_idx]
-                cv_y_train, cv_y_val = y_train.iloc[train_idx], y_train.iloc[val_idx]
-                
-                model.fit(cv_X_train, cv_y_train)
-                preds_val = model.predict(cv_X_val)
-                cv_scores.append(r2_score(cv_y_val, preds_val))
-                
-            avg_cv_r2 = np.mean(cv_scores)
-            print(f"  {name}: Average 5-Fold Time-Series CV R² = {avg_cv_r2:.3f}")
-            
-            # Fit on full training set to evaluate on held-out test split
-            model.fit(X_train, y_train)
             test_preds = model.predict(X_test)
             
             test_rmse = np.sqrt(mean_squared_error(y_test, test_preds))
             test_mae = mean_absolute_error(y_test, test_preds)
             test_r2 = r2_score(y_test, test_preds)
             
-            print(f"    -> Test Metrics: RMSE={test_rmse:.2f}, MAE={test_mae:.2f}, R²={test_r2:.2f}")
+            print(f"  {name} Test Metrics: RMSE={test_rmse:.2f}, MAE={test_mae:.2f}, R²={test_r2:.2f}")
             
             # Selection Criteria: Highest R-squared on validation test set
             if test_r2 > best_r2:
@@ -147,7 +160,7 @@ def run_training_pipeline():
             sample_X = X_test.sample(min(100, len(X_test)), random_state=42)
             
             # Define explainer
-            if "Forest" in best_model_name or "Boosting" in best_model_name:
+            if "Forest" in best_model_name or "Boosting" in best_model_name or "LightGBM" in best_model_name:
                 explainer = shap.TreeExplainer(best_model)
                 shap_values = explainer.shap_values(sample_X)
             else:
