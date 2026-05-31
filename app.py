@@ -378,3 +378,7 @@ else:
             )
             
             st.plotly_chart(fig_shap, use_container_width=True)
+        else:
+            st.info("SHAP values not calculated for this model version.")
+    else:
+        st.info("💡 SHAP interpretability metrics will be available once the training pipeline has been executed at least once.")
