@@ -8,6 +8,11 @@ on:
     - cron: '0 0 * * *'
   workflow_dispatch:
     inputs:
+      run_backfill:
+        description: 'Run Backfill Pipeline (Populates Cloud Feature Store)'
+        required: true
+        type: boolean
+        default: false
       run_feature:
         description: 'Run Feature Pipeline'
         required: true
@@ -37,19 +42,20 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
+        pip install hopsworks
 
     - name: Determine Actions to Run
       id: determine_runs
       run: |
-        # Default behavior based on cron schedule or manual dispatch
+        RUN_BACKFILL="false"
         RUN_FEATURE="false"
         RUN_TRAINING="false"
         
         if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          RUN_BACKFILL="${{ github.event.inputs.run_backfill }}"
           RUN_FEATURE="${{ github.event.inputs.run_feature }}"
           RUN_TRAINING="${{ github.event.inputs.run_training }}"
         elif [ "${{ github.event_name }}" = "schedule" ]; then
-          # Check which cron triggered
           if [ "${{ github.event.schedule }}" = "0 * * * *" ]; then
             RUN_FEATURE="true"
           elif [ "${{ github.event.schedule }}" = "0 0 * * *" ]; then
@@ -57,12 +63,22 @@ jobs:
             RUN_TRAINING="true"
           fi
         else
-          # Fallback (e.g. push or manual testing)
           RUN_FEATURE="true"
         fi
         
+        echo "run_backfill=$RUN_BACKFILL" >> $GITHUB_OUTPUT
         echo "run_feature=$RUN_FEATURE" >> $GITHUB_OUTPUT
         echo "run_training=$RUN_TRAINING" >> $GITHUB_OUTPUT
+
+    - name: Run Backfill Pipeline
+      if: steps.determine_runs.outputs.run_backfill == 'true'
+      env:
+        HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
+        DEFAULT_CITY_NAME: "New York"
+        DEFAULT_LATITUDE: "40.7128"
+        DEFAULT_LONGITUDE: "-74.0060"
+      run: |
+        python backfill.py
 
     - name: Run Feature Pipeline
       if: steps.determine_runs.outputs.run_feature == 'true'
