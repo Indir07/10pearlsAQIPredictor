@@ -103,3 +103,218 @@ def get_aqi_health_details(aqi: float) -> dict:
             "advisory": "STAY INDOORS. Avoid any physical activity. Use recirculated air in HVAC systems."
         }
 
+
+# Popular cities coordinates mapping
+POPULAR_CITIES = {
+    "Karachi (Pakistan)": {"lat": 24.8607, "lon": 67.0011},
+    "Lahore (Pakistan)": {"lat": 31.5204, "lon": 74.3587},
+    "Islamabad (Pakistan)": {"lat": 33.6844, "lon": 73.0479},
+    "Peshawar (Pakistan)": {"lat": 33.9971, "lon": 71.5725},
+    "New York (USA)": {"lat": 40.7128, "lon": -74.0060},
+    "London (UK)": {"lat": 51.5074, "lon": -0.1278},
+    "Tokyo (Japan)": {"lat": 35.6762, "lon": 139.6503},
+    "Bangalore (India)": {"lat": 12.9716, "lon": 77.5946},
+    "Sydney (Australia)": {"lat": -33.8688, "lon": 151.2093},
+    "Paris (France)": {"lat": 48.8566, "lon": 2.3522},
+    "Delhi (India)": {"lat": 28.6139, "lon": 77.2090},
+}
+
+# HEADER
+st.title("💨 Pearls Air Quality Index (AQI) Predictor")
+st.markdown("An end-to-end serverless ML pipeline predicting air quality indices 3 days into the future.")
+
+# SIDEBAR: City Selector & Custom Coordinates
+st.sidebar.header("🌍 Location Settings")
+city_mode = st.sidebar.radio("Select Input Mode", ["Popular Cities", "Custom Coordinates"])
+
+if city_mode == "Popular Cities":
+    selected_city = st.sidebar.selectbox("Choose a City", list(POPULAR_CITIES.keys()))
+    lat = POPULAR_CITIES[selected_city]["lat"]
+    lon = POPULAR_CITIES[selected_city]["lon"]
+    city_name = selected_city.split(" (")[0]
+else:
+    city_name = st.sidebar.text_input("City Name", "Custom Location")
+    lat = st.sidebar.number_input("Latitude", value=DEFAULT_LATITUDE, format="%.4f")
+    lon = st.sidebar.number_input("Longitude", value=DEFAULT_LONGITUDE, format="%.4f")
+
+# Load models and metrics
+models_payload, mr_metrics = FeatureStoreAdapter.load_model("aqi_prediction_models")
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("🤖 Model Registry Status")
+if models_payload is not None:
+    st.sidebar.success("✅ ML Models loaded successfully")
+    st.sidebar.info(f"Feature Store: {'Hopsworks (Cloud)' if FeatureStoreAdapter.is_using_hopsworks() else 'SQLite (Local)'}")
+    
+    # Render metrics in sidebar
+    st.sidebar.markdown("**Validation Performance (R²):**")
+    for key, metric in mr_metrics.items():
+        st.sidebar.write(f"- **{key} Ahead:** R² = {metric.get('r2', 0.0):.2f}")
+else:
+    st.sidebar.warning("⚠️ No trained models found in Registry.")
+    st.sidebar.info("Using baseline Open-Meteo physical forecast models.")
+
+# --- DATA RETRIEVAL ---
+with st.spinner(f"Fetching and processing hourly air quality features for {city_name}..."):
+    raw_df = fetch_aqi_data(lat, lon)
+
+if raw_df.empty:
+    st.error("❌ Failed to fetch data from Open-Meteo API. Please verify coordinates and internet connection.")
+else:
+    # Compute features for prediction
+    featured_df = compute_features(raw_df, include_targets=False)
+    
+    # The API returns past data (usually 48 hours) and future data.
+    # Current hour record is the transition point.
+    now_utc = datetime.utcnow()
+    # Find the row closest to the current local/system time
+    featured_df["time_diff"] = (featured_df["timestamp"] - pd.Timestamp.now()).abs()
+    current_idx = featured_df["time_diff"].idxmin()
+    current_row = featured_df.loc[current_idx]
+    
+    # Current Metrics
+    current_aqi = float(current_row["us_aqi"])
+    health = get_aqi_health_details(current_aqi)
+    
+    # ------------------ HERO DISPLAY ------------------
+    col1, col2 = st.columns([1, 2])
+    
+    with col1:
+        # Beautiful dynamic CSS metric card
+        st.markdown(f"""
+        <div class="metric-card" style="background-color: {health['color']};">
+            <span style="font-size: 0.9rem; text-transform: uppercase; font-weight: 600; opacity: 0.9;">Current AQI in {city_name}</span>
+            <div class="aqi-val">{int(current_aqi)}</div>
+            <div class="aqi-label">{health['label']}</div>
+            <p style="margin-top: 15px; font-size: 0.95rem; opacity: 0.9; line-height: 1.4;">
+                {health['desc']}
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Display alert if forecast is hazardous
+        if current_aqi > 100:
+            st.warning(f"⚠️ **Health Advisory:** {health['advisory']}")
+        else:
+            st.info(f"💡 **Advisory:** {health['advisory']}")
+            
+    with col2:
+        st.subheader("📊 Key Pollutant Concentration Details")
+        st.markdown("Current hourly measures of critical pollutant concentrations (µg/m³ or index):")
+        
+        # Pollutant layout grid
+        p_cols = st.columns(3)
+        pollutants_map = {
+            "PM2.5 (Fine Dust)": {"col": "pm2_5", "max": 75.0, "unit": " µg/m³"},
+            "PM10 (Coarse Dust)": {"col": "pm10", "max": 150.0, "unit": " µg/m³"},
+            "Ozone (O₃)": {"col": "ozone", "max": 180.0, "unit": " µg/m³"},
+            "Nitrogen Dioxide (NO₂)": {"col": "nitrogen_dioxide", "max": 200.0, "unit": " µg/m³"},
+            "Sulfur Dioxide (SO₂)": {"col": "sulphur_dioxide", "max": 350.0, "unit": " µg/m³"},
+            "Carbon Monoxide (CO)": {"col": "carbon_monoxide", "max": 15000.0, "unit": " µg/m³"}
+        }
+        
+        for idx, (label, spec) in enumerate(pollutants_map.items()):
+            val = float(current_row[spec["col"]])
+            # Progress value bounded 0 to 1
+            progress_val = min(1.0, max(0.0, val / spec["max"]))
+            
+            p_cols[idx % 3].metric(label=label, value=f"{val:.1f}{spec['unit']}")
+            p_cols[idx % 3].progress(progress_val)
+            
+    # ------------------ PREDICTIONS & FORECASTING ------------------
+    st.markdown("---")
+    st.subheader("📈 3-Day (72-Hour) AQI Forecasting Timeline")
+    
+    # We will compute forecast timelines:
+    # 1. Physical Forecast (Open-Meteo raw baseline forecast)
+    forecast_df = featured_df.loc[current_idx:].copy().head(73).reset_index(drop=True)
+    
+    # 2. Machine Learning Predictions (Multi-Horizon models)
+    # Check if models exist. If yes, we predict 1d, 2d, 3d points
+    ml_forecast = []
+    
+    if models_payload is not None:
+        models = models_payload["models"]
+        feat_cols = models_payload["feature_cols"]
+        
+        # We can predict at several points. Specifically:
+        # At hour t, we can predict t+24h, t+48h, t+72h.
+        # Let's map these exact dates:
+        current_time = current_row["timestamp"]
+        target_times = {
+            "1d": current_time + timedelta(hours=24),
+            "2d": current_time + timedelta(hours=48),
+            "3d": current_time + timedelta(hours=72)
+        }
+        
+        # Prepare input features vector from current time
+        x_features = pd.DataFrame([current_row[feat_cols]], columns=feat_cols)
+        
+        # Make predictions
+        for horizon in ["1d", "2d", "3d"]:
+            pred_aqi = float(models[horizon].predict(x_features)[0])
+            # Bounded prediction between 0 and 500
+            pred_aqi = min(500.0, max(0.0, pred_aqi))
+            ml_forecast.append({
+                "horizon": f"{horizon.upper()} ML Forecast",
+                "timestamp": target_times[horizon],
+                "aqi": pred_aqi
+            })
+            
+        ml_df = pd.DataFrame(ml_forecast)
+        
+    # --- PLOTLY INTERACTIVE CHART ---
+    fig = go.Figure()
+    
+    # Historical Trend (past 24 hours)
+    history_df = featured_df.loc[:current_idx].tail(24)
+    fig.add_trace(go.Scatter(
+        x=history_df["timestamp"],
+        y=history_df["us_aqi"],
+        name="Historical AQI (Past 24h)",
+        line=dict(color="#4b5563", width=2, dash="dash"),
+        mode="lines"
+    ))
+    
+    # Open-Meteo Baseline Forecast (Next 72 hours)
+    fig.add_trace(go.Scatter(
+        x=forecast_df["timestamp"],
+        y=forecast_df["us_aqi"],
+        name="Open-Meteo Physical Forecast",
+        line=dict(color="#2563eb", width=3),
+        mode="lines+markers"
+    ))
+    
+    # ML Multi-Horizon Predictions
+    if models_payload is not None:
+        fig.add_trace(go.Scatter(
+            x=ml_df["timestamp"],
+            y=ml_df["aqi"],
+            name="10Pearls ML Models Prediction",
+            marker=dict(color="#ec4899", size=12, symbol="diamond"),
+            mode="markers+text",
+            text=[f"ML Predict: {int(x)}" for x in ml_df["aqi"]],
+            textposition="top center",
+            textfont=dict(family="Outfit", size=12, color="#ec4899")
+        ))
+        
+    # Configure Chart Layout
+    fig.update_layout(
+        title=f"AQI Timeline & Model Projections for {city_name}",
+        xaxis_title="Time / Date",
+        yaxis_title="US Air Quality Index (AQI)",
+        hovermode="x unified",
+        template="plotly_white",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        yaxis=dict(range=[0, max(200, featured_df["us_aqi"].max() + 50)])
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Forecast Hazard Warning Alert banner
+    future_hazardous_points = []
+    if models_payload is not None:
+        for idx, row in ml_df.iterrows():
+            if row["aqi"] > 100:
+                health_level = get_aqi_health_details(row["aqi"])["label"]
+                future_hazardous_points.append(f"**{row['horizon']}** ({row['timestamp'].strftime('%b %d, %H:%M')}): Predicted AQI **{int(row['aqi'])}** ({health_level})")
