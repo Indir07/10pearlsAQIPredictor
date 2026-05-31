@@ -133,3 +133,102 @@ class FeatureStoreAdapter:
 
         # Local SQLite Fallback
         print(f"Reading from Local SQLite Table '{group_name}'...")
+        conn = get_db_connection()
+        try:
+            # Check if table exists
+            cursor = conn.cursor()
+            cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{group_name}';")
+            if not cursor.fetchone():
+                print(f"Table '{group_name}' does not exist yet. Returning empty DataFrame.")
+                return pd.DataFrame()
+                
+            df = pd.read_sql_query(f"SELECT * FROM {group_name} ORDER BY timestamp ASC", conn)
+            if "timestamp" in df.columns:
+                df["timestamp"] = pd.to_datetime(df["timestamp"])
+            return df
+        except Exception as e:
+            print(f"SQLite Read Error: {e}")
+            return pd.DataFrame()
+        finally:
+            conn.close()
+
+    @classmethod
+    def save_model(cls, models: dict, model_name: str = "aqi_prediction_models", metrics: dict = None):
+        """Saves models and metrics to local files and/or Hopsworks Model Registry."""
+        # 1. Local Saving
+        local_path = MODEL_DIR / f"{model_name}.pkl"
+        meta_path = MODEL_DIR / f"{model_name}_metadata.pkl"
+        
+        with open(local_path, "wb") as f:
+            pickle.dump(models, f)
+            
+        metadata = {"metrics": metrics or {}}
+        with open(meta_path, "wb") as f:
+            pickle.dump(metadata, f)
+            
+        print(f"Successfully saved models locally to {local_path}")
+
+        # 2. Hopsworks Model Registry Saving
+        if IS_HOPSWORKS_ENABLED:
+            try:
+                import hopsworks
+                print("Connecting to Hopsworks Model Registry...")
+                project = hopsworks.login(api_key_value=HOPSWORKS_API_KEY)
+                mr = project.get_model_registry()
+                
+                # Create Model in Registry
+                hw_model = mr.python.create_model(
+                    name=model_name,
+                    metrics=metrics or {},
+                    description="Random Forest & Ridge regressors for 1-day, 2-day, and 3-day AQI prediction."
+                )
+                
+                # Save the model artifact to registry
+                hw_model.save(str(local_path))
+                print(f"Successfully registered model '{model_name}' on Hopsworks Model Registry!")
+            except Exception as e:
+                print(f"Failed to register model on Hopsworks: {e}. Model is saved locally.")
+
+    @classmethod
+    def load_model(cls, model_name: str = "aqi_prediction_models") -> tuple:
+        """Loads models and metrics from Hopsworks or Local storage."""
+        # Check Hopsworks registry if enabled
+        if IS_HOPSWORKS_ENABLED:
+            try:
+                import hopsworks
+                print("Attempting to load model from Hopsworks Model Registry...")
+                project = hopsworks.login(api_key_value=HOPSWORKS_API_KEY)
+                mr = project.get_model_registry()
+                
+                hw_model = mr.get_model(model_name, version=1)
+                model_dir = hw_model.download()
+                
+                model_path = Path(model_dir) / f"{model_name}.pkl"
+                with open(model_path, "rb") as f:
+                    models = pickle.load(f)
+                    
+                metrics = hw_model.metrics
+                print("Model loaded successfully from Hopsworks.")
+                return models, metrics
+            except Exception as e:
+                print(f"Failed to load from Hopsworks: {e}. Attempting local load...")
+
+        # Local Load Fallback
+        local_path = MODEL_DIR / f"{model_name}.pkl"
+        meta_path = MODEL_DIR / f"{model_name}_metadata.pkl"
+        
+        if not local_path.exists():
+            print(f"No trained model found at {local_path}.")
+            return None, None
+            
+        with open(local_path, "rb") as f:
+            models = pickle.load(f)
+            
+        metrics = {}
+        if meta_path.exists():
+            with open(meta_path, "rb") as f:
+                meta = pickle.load(f)
+                metrics = meta.get("metrics", {})
+                
+        print("Model loaded successfully from Local Storage.")
+        return models, metrics
