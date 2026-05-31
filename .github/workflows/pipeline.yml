@@ -42,7 +42,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install hopsworks
+        pip install "hopsworks[python]"
 
     - name: Determine Actions to Run
       id: determine_runs
