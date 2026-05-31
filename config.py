@@ -25,6 +25,13 @@ DEFAULT_LONGITUDE = float(os.getenv("DEFAULT_LONGITUDE", " -74.0060"))
 
 # Hopsworks Setup
 HOPSWORKS_API_KEY = os.getenv("HOPSWORKS_API_KEY", "").strip()
+try:
+    import streamlit as st
+    if "HOPSWORKS_API_KEY" in st.secrets:
+        HOPSWORKS_API_KEY = st.secrets["HOPSWORKS_API_KEY"].strip()
+except Exception:
+    pass
+
 IS_HOPSWORKS_ENABLED = bool(HOPSWORKS_API_KEY)
 
 
