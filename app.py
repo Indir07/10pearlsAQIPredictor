@@ -318,3 +318,63 @@ else:
             if row["aqi"] > 100:
                 health_level = get_aqi_health_details(row["aqi"])["label"]
                 future_hazardous_points.append(f"**{row['horizon']}** ({row['timestamp'].strftime('%b %d, %H:%M')}): Predicted AQI **{int(row['aqi'])}** ({health_level})")
+                
+    if future_hazardous_points:
+        st.error("🚨 **HAZARDOUS/UNHEALTHY AQI ELEVATION ALERT:**\n\n" + "\n\n".join(future_hazardous_points))
+        
+    # ------------------ FEATURE EXPLAINABILITY (SHAP) ------------------
+    st.markdown("---")
+    st.subheader("🔍 Machine Learning Model Interpretability (SHAP)")
+    
+    if models_payload is not None and "shap_importances" in models_payload:
+        st.write("Understand *which* features have the most influence on the model predictions. The following shows the average absolute SHAP values (feature impact score):")
+        
+        horizon_to_show = st.selectbox("Select Horizon for SHAP Explanation", ["1d", "2d", "3d"])
+        
+        # Load SHAP importance dictionary
+        shaps = models_payload["shap_importances"].get(horizon_to_show, {})
+        
+        if shaps:
+            # Construct DataFrame for plotting
+            shap_df = pd.DataFrame({
+                "Feature": list(shaps.keys()),
+                "Impact Score (SHAP value)": list(shaps.values())
+            }).sort_values("Impact Score (SHAP value)", ascending=True)
+            
+            # Translate technical columns to friendly names
+            friendly_names = {
+                "us_aqi": "Current AQI Value",
+                "pm2_5": "Current PM2.5",
+                "pm10": "Current PM10",
+                "us_aqi_roll_24h": "24h Rolling Average AQI",
+                "us_aqi_roll_6h": "6h Rolling Average AQI",
+                "pm2_5_roll_24h": "24h Rolling Average PM2.5",
+                "pm2_5_roll_6h": "6h Rolling Average PM2.5",
+                "pm10_roll_24h": "24h Rolling Average PM10",
+                "pm10_roll_6h": "6h Rolling Average PM10",
+                "aqi_change_rate_6h": "6-hour AQI Change Rate",
+                "aqi_change_rate_24h": "24-hour AQI Change Rate",
+                "hour": "Hour of Day",
+                "day_of_week": "Day of Week",
+                "month": "Month of Year"
+            }
+            shap_df["Friendly Feature"] = shap_df["Feature"].map(friendly_names).fillna(shap_df["Feature"])
+            
+            # Plot native horizontal bar chart
+            fig_shap = go.Figure()
+            fig_shap.add_trace(go.Bar(
+                y=shap_df["Friendly Feature"],
+                x=shap_df["Impact Score (SHAP value)"],
+                orientation="h",
+                marker=dict(color="#10b981")
+            ))
+            
+            fig_shap.update_layout(
+                title=f"Feature Importances driving {horizon_to_show.upper()} predictions",
+                xaxis_title="Average Impact |SHAP Value|",
+                yaxis_title="Feature Name",
+                template="plotly_white",
+                height=450
+            )
+            
+            st.plotly_chart(fig_shap, use_container_width=True)
