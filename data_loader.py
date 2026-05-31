@@ -65,6 +65,7 @@ def fetch_aqi_data(
         # Add metadata columns
         df["latitude"] = latitude
         df["longitude"] = longitude
+        df["utc_offset_seconds"] = data.get("utc_offset_seconds", 0)
         
         print(f"Successfully fetched {len(df)} hourly air quality records.")
         return df

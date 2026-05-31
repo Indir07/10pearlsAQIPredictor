@@ -176,8 +176,11 @@ else:
     # The API returns past data (usually 48 hours) and future data.
     # Current hour record is the transition point.
     now_utc = datetime.utcnow()
-    # Find the row closest to the current local/system time
-    featured_df["time_diff"] = (featured_df["timestamp"] - pd.Timestamp.now()).abs()
+    # Find the row closest to the current local time at the target city using the API's returned UTC offset
+    target_offset_seconds = int(featured_df["utc_offset_seconds"].iloc[0]) if "utc_offset_seconds" in featured_df.columns else 0
+    target_local_now = now_utc + timedelta(seconds=target_offset_seconds)
+    
+    featured_df["time_diff"] = (featured_df["timestamp"] - target_local_now).abs()
     current_idx = featured_df["time_diff"].idxmin()
     current_row = featured_df.loc[current_idx]
     
