@@ -1,0 +1,85 @@
+name: E2E Serverless AQI ML Pipeline
+
+on:
+  schedule:
+    # Run feature pipeline every hour at minute 0
+    - cron: '0 * * * *'
+    # Run training pipeline every day at midnight UTC
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    inputs:
+      run_feature:
+        description: 'Run Feature Pipeline'
+        required: true
+        type: boolean
+        default: true
+      run_training:
+        description: 'Run Training Pipeline'
+        required: true
+        type: boolean
+        default: false
+
+jobs:
+  run-pipelines:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v3
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Determine Actions to Run
+      id: determine_runs
+      run: |
+        # Default behavior based on cron schedule or manual dispatch
+        RUN_FEATURE="false"
+        RUN_TRAINING="false"
+        
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          RUN_FEATURE="${{ github.event.inputs.run_feature }}"
+          RUN_TRAINING="${{ github.event.inputs.run_training }}"
+        elif [ "${{ github.event_name }}" = "schedule" ]; then
+          # Check which cron triggered
+          if [ "${{ github.event.schedule }}" = "0 * * * *" ]; then
+            RUN_FEATURE="true"
+          elif [ "${{ github.event.schedule }}" = "0 0 * * *" ]; then
+            RUN_FEATURE="true"
+            RUN_TRAINING="true"
+          fi
+        else
+          # Fallback (e.g. push or manual testing)
+          RUN_FEATURE="true"
+        fi
+        
+        echo "run_feature=$RUN_FEATURE" >> $GITHUB_OUTPUT
+        echo "run_training=$RUN_TRAINING" >> $GITHUB_OUTPUT
+
+    - name: Run Feature Pipeline
+      if: steps.determine_runs.outputs.run_feature == 'true'
+      env:
+        HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
+        DEFAULT_CITY_NAME: "New York"
+        DEFAULT_LATITUDE: "40.7128"
+        DEFAULT_LONGITUDE: "-74.0060"
+      run: |
+        python feature_pipeline.py
+
+    - name: Run Training Pipeline
+      if: steps.determine_runs.outputs.run_training == 'true'
+      env:
+        HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
+        DEFAULT_CITY_NAME: "New York"
+        DEFAULT_LATITUDE: "40.7128"
+        DEFAULT_LONGITUDE: "-74.0060"
+      run: |
+        python training_pipeline.py
