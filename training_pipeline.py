@@ -6,7 +6,10 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 from sklearn.model_selection import TimeSeriesSplit, GridSearchCV
 from sklearn.linear_model import Ridge
-from sklearn.ensemble import RandomForestRegressor, HistGradientBoostingRegressor
+from sklearn.ensemble import RandomForestRegressor, HistGradientBoostingRegressor, VotingRegressor
+from sklearn.pipeline import Pipeline
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from config import FeatureStoreAdapter, MODEL_DIR
 
@@ -68,7 +71,7 @@ def run_training_pipeline():
     # 5-Fold Time-Series Cross-Validation setup
     tscv = TimeSeriesSplit(n_splits=5)
     
-    # We train a model for each forecasting target (1-day, 2-day, 3-day ahead)
+    # We train a model for each forecasting target (1-day, 2-day, and 3-day ahead)
     for horizon, target_col in TARGET_COLS.items():
         print(f"\n--- Training Models for Horizon: {horizon} ({target_col}) ---")
         
@@ -84,40 +87,79 @@ def run_training_pipeline():
         print(f"  [Naive Baseline Comparison] Persistence Forecast:")
         print(f"    RMSE = {naive_rmse:.2f}, MAE = {naive_mae:.2f}, R² = {naive_r2:.2f}")
         
-        # 1. Hyperparameter Tuning for Ridge Regression using GridSearchCV over Time-Series splits
-        print("  Running GridSearchCV for Ridge Regression...")
+        # 1. Hyperparameter Tuning for Ridge Regression using Pipeline to prevent data leakage
+        print("  Running GridSearchCV for Ridge Regression Pipeline...")
+        ridge_pipe = Pipeline([
+            ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", StandardScaler()),
+            ("regressor", Ridge())
+        ])
         ridge_cv = GridSearchCV(
-            Ridge(),
-            {"alpha": [0.1, 1.0, 10.0, 100.0, 1000.0]},
+            ridge_pipe,
+            {"regressor__alpha": [0.1, 1.0, 10.0, 100.0, 1000.0]},
             cv=tscv,
             scoring="neg_mean_squared_error"
         )
         ridge_cv.fit(X_train, y_train)
-        best_ridge = ridge_cv.best_estimator_
-        print(f"    -> Best Ridge Alpha: {ridge_cv.best_params_['alpha']}")
+        best_ridge_alpha = ridge_cv.best_params_["regressor__alpha"]
+        print(f"    -> Best Ridge Alpha: {best_ridge_alpha}")
         
-        # 2. Hyperparameter Tuning for HistGradientBoosting (LightGBM equivalent) using GridSearchCV
-        print("  Running GridSearchCV for HistGradientBoosting (LightGBM)...")
+        # 2. Hyperparameter Tuning for HistGradientBoosting (LightGBM equivalent) Pipeline
+        print("  Running GridSearchCV for HistGradientBoosting (LightGBM) Pipeline...")
+        hgb_pipe = Pipeline([
+            ("imputer", SimpleImputer(strategy="median")),
+            ("regressor", HistGradientBoostingRegressor(random_state=42))
+        ])
         hgb_cv = GridSearchCV(
-            HistGradientBoostingRegressor(random_state=42),
+            hgb_pipe,
             {
-                "max_depth": [3, 5, 8],
-                "learning_rate": [0.01, 0.05, 0.1],
-                "max_iter": [50, 100]
+                "regressor__max_depth": [3, 5, 8],
+                "regressor__learning_rate": [0.01, 0.05, 0.1],
+                "regressor__max_iter": [50, 100]
             },
             cv=tscv,
             scoring="neg_mean_squared_error",
             n_jobs=-1
         )
         hgb_cv.fit(X_train, y_train)
-        best_hgb = hgb_cv.best_estimator_
-        print(f"    -> Best HistGradientBoosting Params: {hgb_cv.best_params_}")
+        best_hgb_params = {
+            k.replace("regressor__", ""): v for k, v in hgb_cv.best_params_.items()
+        }
+        print(f"    -> Best HistGradientBoosting Params: {best_hgb_params}")
         
-        # Define candidate models with best tuned parameters
+        # Define candidate pipeline models with best tuned parameters
+        tuned_ridge = Pipeline([
+            ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", StandardScaler()),
+            ("regressor", Ridge(alpha=best_ridge_alpha))
+        ])
+        
+        tuned_hgb = Pipeline([
+            ("imputer", SimpleImputer(strategy="median")),
+            ("regressor", HistGradientBoostingRegressor(random_state=42, **best_hgb_params))
+        ])
+        
+        rf_pipe = Pipeline([
+            ("imputer", SimpleImputer(strategy="median")),
+            ("regressor", RandomForestRegressor(n_estimators=100, max_depth=12, random_state=42, n_jobs=-1))
+        ])
+        
+        # Combined VotingRegressor Ensemble Pipeline
+        ensemble_pipe = Pipeline([
+            ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", StandardScaler()),
+            ("regressor", VotingRegressor(estimators=[
+                ("ridge", Ridge(alpha=best_ridge_alpha)),
+                ("hgb", HistGradientBoostingRegressor(random_state=42, **best_hgb_params)),
+                ("rf", RandomForestRegressor(n_estimators=100, max_depth=12, random_state=42, n_jobs=-1))
+            ]))
+        ])
+        
         candidates = {
-            "Tuned Ridge Regression": best_ridge,
-            "Tuned HistGradientBoosting (LightGBM)": best_hgb,
-            "Random Forest": RandomForestRegressor(n_estimators=100, max_depth=12, random_state=42, n_jobs=-1)
+            "Tuned Ridge Regression": tuned_ridge,
+            "Tuned HistGradientBoosting (LightGBM)": tuned_hgb,
+            "Random Forest": rf_pipe,
+            "Voting Regressor Ensemble": ensemble_pipe
         }
         
         best_r2 = -float("inf")
@@ -127,6 +169,8 @@ def run_training_pipeline():
         
         # Evaluate candidate models on the held-out test split
         for name, model in candidates.items():
+            # Explicitly fit the model pipeline on full training set first
+            model.fit(X_train, y_train)
             test_preds = model.predict(X_test)
             
             test_rmse = np.sqrt(mean_squared_error(y_test, test_preds))
@@ -159,14 +203,31 @@ def run_training_pipeline():
             print(f"  Calculating SHAP explanations for {best_model_name}...")
             sample_X = X_test.sample(min(100, len(X_test)), random_state=42)
             
+            # Extract preprocessing and final regressor
+            preprocessing_steps = best_model.steps[:-1]
+            if preprocessing_steps:
+                preprocessor = Pipeline(preprocessing_steps)
+                sample_X_preprocessed = preprocessor.transform(sample_X)
+                # Re-wrap in DataFrame to keep column headers for SHAP
+                sample_X_preprocessed = pd.DataFrame(sample_X_preprocessed, columns=FEATURE_COLS, index=sample_X.index)
+            else:
+                sample_X_preprocessed = sample_X
+                
+            regressor = best_model.named_steps["regressor"]
+            
+            explain_model = regressor
+            if isinstance(regressor, VotingRegressor):
+                print("  Best model is an Ensemble. Using the HistGradientBoosting base model for SHAP explanations.")
+                explain_model = regressor.named_estimators_["hgb"]
+            
             # Define explainer
-            if "Forest" in best_model_name or "Boosting" in best_model_name or "LightGBM" in best_model_name:
-                explainer = shap.TreeExplainer(best_model)
-                shap_values = explainer.shap_values(sample_X)
+            if isinstance(explain_model, (RandomForestRegressor, HistGradientBoostingRegressor)):
+                explainer = shap.TreeExplainer(explain_model)
+                shap_values = explainer.shap_values(sample_X_preprocessed)
             else:
                 # Linear/Kernel Explainer for Ridge
-                explainer = shap.Explainer(best_model.predict, sample_X)
-                shap_values = explainer(sample_X).values
+                explainer = shap.Explainer(explain_model.predict, sample_X_preprocessed)
+                shap_values = explainer(sample_X_preprocessed).values
                 
             if isinstance(shap_values, list):
                 mean_shap = np.mean([np.abs(sv).mean(axis=0) for sv in shap_values], axis=0)
