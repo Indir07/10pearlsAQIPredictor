@@ -221,8 +221,18 @@ class FeatureStoreAdapter:
                 print("Attempting to load model from Hopsworks Model Registry...")
                 project = hopsworks.login(api_key_value=HOPSWORKS_API_KEY)
                 mr = project.get_model_registry()
-                
-                hw_model = mr.get_model(model_name, version=1)
+                # Retrieve the latest model version from the registry
+                try:
+                    models = mr.get_models(model_name)
+                    if models:
+                        hw_model = max(models, key=lambda m: m.version)
+                        print(f"Loading latest model version: {hw_model.version}")
+                    else:
+                        hw_model = mr.get_model(model_name, version=1)
+                except Exception as ex:
+                    print(f"Error getting latest model, falling back to version 1: {ex}")
+                    hw_model = mr.get_model(model_name, version=1)
+
                 model_dir = hw_model.download()
                 
                 model_path = Path(model_dir) / f"{model_name}.pkl"
