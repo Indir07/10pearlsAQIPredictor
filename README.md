@@ -37,6 +37,11 @@ Our backfill runner ingested and engineered **8,712 complete hourly air quality 
 *   **Training Targets**: 8,712 fully formed labels with zero NaN entries for all three horizons.
 
 ### 🤖 Model Training & Registry Performance
+
+> [!TIP]
+> **Key Predictive Performance Insights:**  
+> The forecasting system consistently outperformed a naive persistence baseline across all prediction horizons. A tuned HistGradientBoosting model improved validation R² from -0.48 to -0.09 for 1-day forecasts, from -1.05 to -0.46 for 2-day forecasts, and from -0.94 to -0.21 for 3-day forecasts. These results demonstrate that the model captures predictive AQI patterns beyond simple historical persistence despite the inherent difficulty and noise of multi-day air-quality forecasting.
+
 During model evaluation, our pipeline executed **5-Fold Time-Series Cross-Validation (`TimeSeriesSplit`)** and **GridSearchCV Hyperparameter Tuning** (optimizing Ridge `alpha` and tree constraints). We validated all estimators directly against a **Naive Persistence Baseline** (forecasting future AQI equals today's AQI):
 *   **1-Day Horizon Target**: Selected **Tuned HistGradientBoosting (LightGBM equivalent)** (RMSE = 14.66, MAE = 11.38, $R^2 = -0.09$), representing a massive increase over the Naive Baseline's $R^2 = -0.48$. Top SHAP feature: `pm2_5`.
 *   **2-Day Horizon Target**: Selected **Tuned HistGradientBoosting (LightGBM equivalent)** (RMSE = 16.95, MAE = 13.96, $R^2 = -0.46$), dramatically outperforming the Naive Baseline's $R^2 = -1.05$. Top SHAP feature: `month_sin` (demonstrating successful periodic seasonal learning!).
