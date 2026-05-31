@@ -78,7 +78,7 @@ class FeatureStoreAdapter:
                         primary_key=["timestamp"],
                         event_time="timestamp",
                         description="AQI forecast and weather features",
-                        online_enabled=True
+                        online_enabled=False
                     )
                     print(f"Inserting {len(df)} records into Hopsworks Feature Group '{fg_name}'...")
                     fg.insert(df, write_options={"wait_for_job": False})
