@@ -179,10 +179,22 @@ class FeatureStoreAdapter:
                 project = hopsworks.login(api_key_value=HOPSWORKS_API_KEY)
                 mr = project.get_model_registry()
                 
+                # Flat, numeric metrics for Hopsworks Model Registry
+                hw_metrics = {}
+                if metrics:
+                    for horizon, h_metrics in metrics.items():
+                        for k, v in h_metrics.items():
+                            if isinstance(v, (int, float)):
+                                hw_metrics[f"{horizon}_{k}"] = float(v)
+                            elif k == "naive_comparison" and isinstance(v, dict):
+                                for nk, nv in v.items():
+                                    if isinstance(nv, (int, float)):
+                                        hw_metrics[f"{horizon}_naive_{nk}"] = float(nv)
+
                 # Create Model in Registry
                 hw_model = mr.python.create_model(
                     name=model_name,
-                    metrics=metrics or {},
+                    metrics=hw_metrics,
                     description="Random Forest & Ridge regressors for 1-day, 2-day, and 3-day AQI prediction."
                 )
                 
