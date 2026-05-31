@@ -4,15 +4,17 @@ import pickle
 import shap
 import matplotlib.pyplot as plt
 from pathlib import Path
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import TimeSeriesSplit, GridSearchCV
 from sklearn.linear_model import Ridge
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from config import FeatureStoreAdapter, MODEL_DIR
 
-# Defined Feature columns
+# Expanded Feature columns with cyclical encoding
 FEATURE_COLS = [
     "hour", "day_of_week", "month",
+    "hour_sin", "hour_cos",
+    "month_sin", "month_cos",
     "pm2_5", "pm10", "us_aqi",
     "pm2_5_roll_6h", "pm2_5_roll_24h",
     "pm10_roll_6h", "pm10_roll_24h",
@@ -63,12 +65,24 @@ def run_training_pipeline():
     all_metrics = {}
     shap_importances = {}
     
+    # 5-Fold Time-Series Cross-Validation setup
+    tscv = TimeSeriesSplit(n_splits=5)
+    
     # We train a model for each forecasting target (1-day, 2-day, 3-day ahead)
     for horizon, target_col in TARGET_COLS.items():
         print(f"\n--- Training Models for Horizon: {horizon} ({target_col}) ---")
         
         y_train = train_df[target_col]
         y_test = test_df[target_col]
+        
+        # Calculate Naive Persistence Baseline (predict future AQI = current AQI)
+        y_pred_naive = X_test["us_aqi"]
+        naive_rmse = np.sqrt(mean_squared_error(y_test, y_pred_naive))
+        naive_mae = mean_absolute_error(y_test, y_pred_naive)
+        naive_r2 = r2_score(y_test, y_pred_naive)
+        
+        print(f"  [Naive Baseline Comparison] Persistence Forecast:")
+        print(f"    RMSE = {naive_rmse:.2f}, MAE = {naive_mae:.2f}, R² = {naive_r2:.2f}")
         
         # Define candidate models
         candidates = {
@@ -82,36 +96,52 @@ def run_training_pipeline():
         best_model = None
         best_model_metrics = {}
         
+        # Loop through models, perform cross-validation first, then fit on full train set
         for name, model in candidates.items():
-            # Fit
+            cv_scores = []
+            
+            # Perform Time-Series Cross-Validation
+            for train_idx, val_idx in tscv.split(X_train):
+                cv_X_train, cv_X_val = X_train.iloc[train_idx], X_train.iloc[val_idx]
+                cv_y_train, cv_y_val = y_train.iloc[train_idx], y_train.iloc[val_idx]
+                
+                model.fit(cv_X_train, cv_y_train)
+                preds_val = model.predict(cv_X_val)
+                cv_scores.append(r2_score(cv_y_val, preds_val))
+                
+            avg_cv_r2 = np.mean(cv_scores)
+            print(f"  {name}: Average 5-Fold Time-Series CV R² = {avg_cv_r2:.3f}")
+            
+            # Fit on full training set to evaluate on held-out test split
             model.fit(X_train, y_train)
+            test_preds = model.predict(X_test)
             
-            # Predict
-            preds = model.predict(X_test)
+            test_rmse = np.sqrt(mean_squared_error(y_test, test_preds))
+            test_mae = mean_absolute_error(y_test, test_preds)
+            test_r2 = r2_score(y_test, test_preds)
             
-            # Evaluate
-            rmse = np.sqrt(mean_squared_error(y_test, preds))
-            mae = mean_absolute_error(y_test, preds)
-            r2 = r2_score(y_test, preds)
+            print(f"    -> Test Metrics: RMSE={test_rmse:.2f}, MAE={test_mae:.2f}, R²={test_r2:.2f}")
             
-            print(f"  {name}: RMSE={rmse:.2f}, MAE={mae:.2f}, R2={r2:.2f}")
-            
-            # Selection Criteria: Highest R-squared
-            if r2 > best_r2:
-                best_r2 = r2
+            # Selection Criteria: Highest R-squared on validation test set
+            if test_r2 > best_r2:
+                best_r2 = test_r2
                 best_model_name = name
                 best_model = model
-                best_model_metrics = {"rmse": float(rmse), "mae": float(mae), "r2": float(r2)}
+                best_model_metrics = {"rmse": float(test_rmse), "mae": float(test_mae), "r2": float(test_r2)}
                 
-        print(f"Selected Best Model for {horizon}: {best_model_name} (R2={best_r2:.2f})")
+        print(f"Selected Best Model for {horizon}: {best_model_name} (Test R² = {best_r2:.2f})")
         best_models[horizon] = best_model
         all_metrics[horizon] = {
             "model_name": best_model_name,
-            **best_model_metrics
+            **best_model_metrics,
+            "naive_comparison": {
+                "rmse": float(naive_rmse),
+                "mae": float(naive_mae),
+                "r2": float(naive_r2)
+            }
         }
         
         # 3. Calculate SHAP Explanations for the best model
-        # To keep it fast, we use a sample of 100 test rows
         try:
             print(f"  Calculating SHAP explanations for {best_model_name}...")
             sample_X = X_test.sample(min(100, len(X_test)), random_state=42)
@@ -125,17 +155,13 @@ def run_training_pipeline():
                 explainer = shap.Explainer(best_model.predict, sample_X)
                 shap_values = explainer(sample_X).values
                 
-            # Compute mean absolute SHAP values per feature for dashboard visualization
-            # If multi-output or different shape, handle appropriately
             if isinstance(shap_values, list):
-                # Class list (sometimes happens in tree algorithms, let's take index 0 or average)
                 mean_shap = np.mean([np.abs(sv).mean(axis=0) for sv in shap_values], axis=0)
             else:
                 mean_shap = np.abs(shap_values).mean(axis=0)
                 
             # Create feature ranking dictionary
             feat_imp = dict(zip(FEATURE_COLS, [float(x) for x in mean_shap]))
-            # Sort by importance
             feat_imp = dict(sorted(feat_imp.items(), key=lambda item: item[1], reverse=True))
             shap_importances[horizon] = feat_imp
             print(f"  SHAP Calculations successful. Top feature: {list(feat_imp.keys())[0]}")
