@@ -61,11 +61,10 @@ class FeatureStoreAdapter:
             print("DataFrame is empty, skipping insertion.")
             return
 
-        # Ensure timestamp column exists and is cast properly
+        # Ensure timestamp column exists and is parsed as datetime
+        df = df.copy()
         if "timestamp" in df.columns:
-            # Convert to string format if necessary for serialization
-            df = df.copy()
-            df["timestamp"] = df["timestamp"].astype(str)
+            df["timestamp"] = pd.to_datetime(df["timestamp"])
 
         if IS_HOPSWORKS_ENABLED:
             try:
@@ -89,6 +88,10 @@ class FeatureStoreAdapter:
                 print(f"Failed to write to Hopsworks: {e}. Writing to Local SQLite instead.")
 
         # Local SQLite Fallback
+        if "timestamp" in df.columns:
+            # Convert to string format for SQLite serialization
+            df["timestamp"] = df["timestamp"].astype(str)
+
         print(f"Inserting {len(df)} records into Local SQLite Table '{group_name}'...")
         conn = get_db_connection()
         try:
