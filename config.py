@@ -234,6 +234,7 @@ class FeatureStoreAdapter:
                 return models, metrics
             except Exception as e:
                 print(f"Failed to load from Hopsworks: {e}. Attempting local load...")
+                return None, f"Hopsworks Error: {str(e)}"
 
         # Local Load Fallback
         local_path = MODEL_DIR / f"{model_name}.pkl"
@@ -241,7 +242,8 @@ class FeatureStoreAdapter:
         
         if not local_path.exists():
             print(f"No trained model found at {local_path}.")
-            return None, None
+            # Return any collected error message if present
+            return None, locals().get("e", None)
             
         with open(local_path, "rb") as f:
             models = pickle.load(f)

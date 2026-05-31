@@ -159,6 +159,8 @@ if models_payload is not None:
             st.sidebar.write(f"- **Naive R²:** `{naive.get('r2', 0.0):.2f}`")
 else:
     st.sidebar.warning("⚠️ No trained models found in Registry.")
+    if mr_metrics:
+        st.sidebar.error(f"Registry Diagnostics:\n\n`{str(mr_metrics)}`")
     st.sidebar.info("Using baseline Open-Meteo physical forecast models.")
 
 # --- DATA RETRIEVAL ---
