@@ -1,0 +1,22 @@
+# Virtual environment
+venv/
+ENV/
+env/
+.venv/
+
+# Environment configurations
+.env
+
+# Python compilation files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local database & ML model artifacts
+data/*.db
+data/models/*.pkl
+data/models/*_metadata.pkl
+
+# IDE folders
+.vscode/
+.idea/
