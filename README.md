@@ -43,33 +43,23 @@ Our backfill runner ingested and engineered **8,712 complete hourly air quality 
 ## 🤖 Model Performance Registry Audit
 
 During model evaluation, our pipeline executed **5-Fold Time-Series Cross-Validation (`TimeSeriesSplit`)** and **GridSearchCV Hyperparameter Tuning** (optimizing Ridge `alpha` and tree constraints) inside isolated pipelines. We validated all estimators directly against a **Naive Persistence Baseline** (forecasting future AQI equals today's AQI):
-
-### 📍 1-Day Ahead Forecast Horizon (Target: `target_aqi_1d`)
-*   **Naive Persistence Baseline**: RMSE = **17.03**, MAE = **13.27**, $R^2$ = **-0.48**
-*   **Tuned Ridge Regression**: RMSE = 17.77, MAE = 14.95, $R^2$ = -0.61
-*   **Random Forest**: RMSE = 16.62, MAE = 13.15, $R^2$ = -0.41
-*   **Voting Regressor Ensemble**: RMSE = 15.56, MAE = 12.48, $R^2$ = -0.23
-*   🏆 **Tuned HistGradientBoosting (LightGBM equivalent)**: **RMSE = 14.66**, **MAE = 11.38**, **$R^2 = -0.09**
-    - *Metric Gain*: Improved validation $R^2$ from **-0.48** to **-0.09**!
-    - *Top SHAP Feature*: `pm2_5`
-
-### 📍 2-Day Ahead Forecast Horizon (Target: `target_aqi_2d`)
-*   **Naive Persistence Baseline**: RMSE = **20.09**, MAE = **15.92**, $R^2$ = **-1.05**
-*   **Tuned Ridge Regression**: RMSE = 24.24, MAE = 21.25, $R^2$ = -1.99
-*   **Random Forest**: RMSE = 18.88, MAE = 15.06, $R^2$ = -0.81
-*   **Voting Regressor Ensemble**: RMSE = 18.80, MAE = 15.65, $R^2$ = -0.80
-*   🏆 **Tuned HistGradientBoosting (LightGBM equivalent)**: **RMSE = 16.95**, **MAE = 13.96**, **$R^2 = -0.46**
-    - *Metric Gain*: Improved validation $R^2$ from **-1.05** to **-0.46**!
-    - *Top SHAP Feature*: `month_sin` (demonstrating successful periodic seasonal learning!)
-
-### 📍 3-Day Ahead Forecast Horizon (Target: `target_aqi_3d`)
-*   **Naive Persistence Baseline**: RMSE = **19.68**, MAE = **15.60**, $R^2$ = **-0.94**
-*   **Tuned Ridge Regression**: RMSE = 24.30, MAE = 21.30, $R^2$ = -1.95
-*   **Random Forest**: RMSE = 18.83, MAE = 14.93, $R^2$ = -0.77
-*   **Voting Regressor Ensemble**: RMSE = 18.39, MAE = 15.34, $R^2$ = -0.69
-*   🏆 **Tuned HistGradientBoosting (LightGBM equivalent)**: **RMSE = 15.56**, **MAE = 12.52**, **$R^2 = -0.21**
-    - *Metric Gain*: Improved validation $R^2$ from **-0.94** to **-0.21**!
-    - *Top SHAP Feature*: `hour` (capturing diurnal temperature inversion trends)
+| Forecast Horizon | Model / Algorithm | Test RMSE | Test MAE | Test $R^2$ Score | Validation Status | Top SHAP Feature |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **1-Day Ahead**<br>`(target_aqi_1d)` | Tuned Ridge Regression | 17.77 | 14.95 | -0.61 | Underperformed | — |
+| | Random Forest | 16.62 | 13.15 | -0.41 | Minor Lift | — |
+| | Voting Regressor Ensemble | 15.56 | 12.48 | -0.23 | Strong Lift | — |
+| | 🏆 **Tuned HistGradientBoosting (LightGBM)** | **14.66** | **11.38** | **-0.09** | **Selected Best (Significant Lift)** | `pm2_5` |
+| | *Naive Persistence Baseline* | *17.03* | *13.27* | *-0.48* | *Baseline benchmark* | — |
+| **2-Day Ahead**<br>`(target_aqi_2d)` | Tuned Ridge Regression | 24.24 | 21.25 | -1.99 | Underperformed | — |
+| | Random Forest | 18.88 | 15.06 | -0.81 | Minor Lift | — |
+| | Voting Regressor Ensemble | 18.80 | 15.65 | -0.80 | Minor Lift | — |
+| | 🏆 **Tuned HistGradientBoosting (LightGBM)** | **16.95** | **13.96** | **-0.46** | **Selected Best (Significant Lift)** | `month_sin` |
+| | *Naive Persistence Baseline* | *20.09* | *15.92* | *-1.05* | *Baseline benchmark* | — |
+| **3-Day Ahead**<br>`(target_aqi_3d)` | Tuned Ridge Regression | 24.30 | 21.30 | -1.95 | Underperformed | — |
+| | Random Forest | 18.83 | 14.93 | -0.77 | Minor Lift | — |
+| | Voting Regressor Ensemble | 18.39 | 15.34 | -0.69 | Minor Lift | — |
+| | 🏆 **Tuned HistGradientBoosting (LightGBM)** | **15.56** | **12.52** | **-0.21** | **Selected Best (Significant Lift)** | `hour` |
+| | *Naive Persistence Baseline* | *19.68* | *15.60* | *-0.94* | *Baseline benchmark* | — |
 
 ---
 
