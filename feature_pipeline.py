@@ -27,6 +27,12 @@ def compute_features(df: pd.DataFrame, include_targets: bool = False) -> pd.Data
     df["day_of_week"] = df["timestamp"].dt.dayofweek
     df["month"] = df["timestamp"].dt.month
     
+    # Cyclical temporal encoding (enables models to see continuity, e.g. Hour 23 adjacent to Hour 0)
+    df["hour_sin"] = np.sin(2 * np.pi * df["hour"] / 24.0)
+    df["hour_cos"] = np.cos(2 * np.pi * df["hour"] / 24.0)
+    df["month_sin"] = np.sin(2 * np.pi * (df["month"] - 1) / 12.0)
+    df["month_cos"] = np.cos(2 * np.pi * (df["month"] - 1) / 12.0)
+    
     # 2. Rolling Window Features (6h and 24h means)
     for col in ["pm2_5", "pm10", "us_aqi"]:
         df[f"{col}_roll_6h"] = df[col].rolling(window=6, min_periods=1).mean()
