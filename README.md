@@ -1,48 +1,86 @@
 # Pearls AQI Predictor 💨
 
-An end-to-end, 100% serverless machine learning pipeline that forecasts the **Air Quality Index (AQI) up to 3 days in advance** for any city globally.
+An end-to-end, production-grade, serverless machine learning pipeline that forecasts the **Air Quality Index (AQI) up to 3 days (72 hours) in advance** for any city globally. The architecture seamlessly shifts between a **Hopsworks Cloud Feature Store** (fully serverless) and a **local SQLite fallback store**, making it incredibly robust and 100% executable out of the box.
+
+👉 **Deployed Dashboard**: [Streamlit Cloud Live App](https://10pearlsaqipredictor-bgeuixmbnirzwyzmyzb3sf.streamlit.app/)
+👉 **Hopsworks Registry**: [Cloud Models View](https://eu-west.cloud.hopsworks.ai:443/p/33049/models/aqi_prediction_models/2)
 
 ---
 
 ## 🏗️ Technical Architecture Overview
 
-This project implements a fully productionized, leak-free ML pipeline containing automated data ingestion, cyclical feature engineering, historical backfilling, multi-horizon ensembled model training, explainability, and a dynamic real-time Streamlit dashboard:
+The system is designed as a modular, scheduled serverless pipeline orchestrating ingestion, transformation, model training, registry versioning, interpretability, and interactive dashboarding:
 
-1. **Feature Ingestion & Pipeline**: Automatically downloads weather and pollutant metrics from the free **Open-Meteo Air Quality API** (completely open, no key registration needed).
-2. **Dual-Mode Feature Store**:
-   - **Hopsworks Integration (Cloud Mode)**: Writes features and retrieves them serverlessly in the cloud if an API key is configured.
-   - **SQLite Adapter (Local Mode)**: Stores and reads data from a local SQLite database (`local_feature_store.db`) if no key is set. Works **100% out of the box!**
-3. **Leak-Free Training Pipeline**:
-   - Preprocessing steps (`SimpleImputer` and `StandardScaler`) are encapsulated directly inside Scikit-Learn `Pipeline` containers to **completely prevent target and feature leakage**.
-   - Hyperparameters are optimized using 5-fold Time-Series Cross-Validation (`TimeSeriesSplit`) and `GridSearchCV`.
-   - Compares Ridge Regression, RandomForest, HistGradientBoosting (LightGBM equivalent), and a combined **`VotingRegressor` Ensemble**.
-   - Evaluates performance using standard regression metrics: **RMSE, MAE, and $R^2$** against a **Naive Persistence Baseline**.
-   - Pre-computes **SHAP (Shapley Additive exPlanations)** values to identify feature importances.
-4. **Dynamic Streamlit Web App**:
-   - Shows the current AQI with EPA-defined color codings and health advisories.
-   - Compares the baseline forecast with our ML predictions on interactive Plotly graphs.
-   - Visualizes SHAP feature importances per horizon.
-5. **CI/CD Orchestration**:
-   - GitHub Actions workflow (`pipeline.yml`) runs the feature pipeline hourly and the model training pipeline daily.
+```mermaid
+graph TD
+    A[Open-Meteo Air Quality API] -->|Raw Pollutants & Weather| B[data_loader.py]
+    B -->|Timezone-Safe Ingestion| C{Feature Store Adapter}
+    C -->|Cloud Mode| D[Hopsworks Cloud Feature Store]
+    C -->|Local Mode| E[Local SQLite Database]
+    D --> F[training_pipeline.py]
+    E --> F
+    F -->|GridSearchCV & TSCV| G[Pipeline Selection]
+    G -->|Tuned HistGradientBoosting| H{Model Registry}
+    H -->|Cloud Registry| I[Hopsworks Model Registry]
+    H -->|Local Registry| J[Local Metadata & PKL]
+    I -->|Dynamic Version Loader| K[app.py Streamlit Dashboard]
+    J -->|Local Loader| K
+```
+
+### 1. Feature Ingestion & Pipeline (`data_loader.py`)
+Fetches comprehensive weather and pollutant matrices hourly from the **Open-Meteo Air Quality API**. It extracts PM2.5, PM10, Nitrogen Dioxide ($NO_2$), Sulfur Dioxide ($SO_2$), Ozone ($O_3$), Carbon Monoxide ($CO$), and the local UTC offset seconds.
+
+### 2. Dual-Mode Unified Feature Store (`config.py`)
+*   **Hopsworks Integration (Cloud Mode):** Streams hourly engineered features serverlessly to the Hopsworks Cloud Feature Group `aqi_features` (version 1) using an API key.
+*   **SQLite Adapter (Local Mode):** Automatically falls back to a local database (`local_feature_store.db`) if no API key is specified, keeping it fully functional for offline development.
+
+### 3. Leak-Free Machine Learning Pipeline (`training_pipeline.py`)
+*   **Zero-Leakage Engineering:** Wraps imputation (`SimpleImputer`) and feature scaling (`StandardScaler`) directly inside Scikit-Learn `Pipeline` wrappers. Imputation values and scaling coefficients are computed strictly on training folds to completely eliminate target and structural leakage.
+*   **Hyperparameter Tuning:** Utilizes 5-fold Time-Series Cross-Validation (`TimeSeriesSplit`) combined with `GridSearchCV` to optimize estimators.
+*   **Algorithm Blending:** Evaluates and optimizes Ridge Regression, Random Forest, HistGradientBoosting (LightGBM equivalent), and a custom **`VotingRegressor` Ensemble** blending all candidate representations.
+*   **Baseline Benchmark:** Validates all models against a **Naive Persistence Baseline** ($AQI_{t+H} = AQI_t$) using standard regression metrics ($RMSE$, $MAE$, $R^2$).
+*   **SHAP Interpretability:** Fits a `TreeExplainer` on the best model to generate Shapley feature importances across the 1d, 2d, and 3d forecasting horizons.
+
+### 4. Dynamic Timezone-Safe Streamlit Dashboard (`app.py`)
+Renders EPA-defined air quality classifications, health advisories, interactive Plotly timelines showing forecasted trajectories, and live SHAP explanations.
 
 ---
 
-## 🚀 Accomplished Project Milestones
+## 🧪 Scientific Deep Dive: Physical Forecasts vs. Ground Sensors
 
-We have successfully fulfilled **100% of the project requirements** over a beautifully structured Git commit history representing the complete development trajectory.
+Users may notice differences between the AQI reported by this app and real-time ground-level sensor aggregators (like IQAir):
 
-### 📊 Ingestion Backfill Audits
-Our backfill runner ingested and engineered **8,712 complete hourly air quality rows** representing a full year of history (May 31, 2025 to May 28, 2026). Statistics audited by our custom verification tool `check_data.py`:
-*   **Ingested Observations**: 8,712 rows
-*   **AQI Extremes**: Min = 17.0 (Excellent), Max = 203.0 (Very Unhealthy), Avg = 55.85 (Moderate)
-*   **Particulates (PM2.5)**: Min = 0.3 µg/m³, Max = 88.7 µg/m³
-*   **Training Targets**: 8,712 fully formed labels with zero NaN entries for all three horizons.
+> [!IMPORTANT]
+> **Why does our app show a different AQI than IQAir in some cities?**
+>
+> 1. **Multi-Pollutant vs. PM2.5-Only Sensors:** Many ground-level monitoring stations (especially low-cost private sensors) only measure **PM2.5 particulate matter** and do not have expensive gas sensors. IQAir calculates the AQI solely based on that PM2.5 sensor (e.g. `15 µg/m³` $\approx$ `57-62` Moderate AQI).
+> 2. **The Ozone Factor:** The Open-Meteo atmospheric chemistry models simulate a wide range of gases, including **Ozone ($O_3$)**. During hot afternoons, solar radiation creates significant simulated Ozone concentrations (e.g., `188.0 µg/m³` $\approx$ `96 ppb`). Under US EPA standards, an Ozone level of `96 ppb` triggers a US AQI of **`152` (Unhealthy for Sensitive Groups)**. 
+> 3. **Grid Cell vs. Point Source:** Atmospheric models calculate physical estimates averaged across a grid cell (e.g., 10km to 80km), whereas ground sensors capture hyper-local, immediate micro-climates.
+
+---
+
+## ⚙️ Key Technical Enhancements
+
+This repository implements industry best practices for serverless machine learning engineering:
+
+*   **Dynamic Model Registry Versioning:** Refactored the Model Registry loader to dynamically retrieve the **latest** available version of the models (`mr.get_models()`) instead of hardcoding version numbers.
+*   **Flexible Key Serialization Fallback:** Hopsworks Model Registry automatically sanitizes single underscores (`_`) into double underscores (`__`) for numeric metric dictionaries (e.g. `2d_r2` becomes `2d__r2`). The dashboard implements a dual-lookup scheme to support both structures:
+    ```python
+    "r2": float(raw_metrics.get(f"{horizon}__r2", raw_metrics.get(f"{horizon}_r2", 0.0)))
+    ```
+*   **Timezone-Safe Indexing:** Replaced naive system-time matching with target offset tracking. Since Streamlit Cloud runs in UTC, comparing datetimes against server local time matched incorrect hours. The app extracts `utc_offset_seconds` from the API response and matches the exact current local hour of the target coordinates:
+    ```python
+    target_local_now = datetime.utcnow() + timedelta(seconds=target_offset_seconds)
+    featured_df["time_diff"] = (featured_df["timestamp"] - target_local_now).abs()
+    ```
+*   **Streamlit Cloud Stability:** Pinned Streamlit Cloud to a stable **Python 3.11** runtime environment inside `runtime.txt` to prevent metaclass compilation conflicts.
 
 ---
 
 ## 🤖 Model Performance Registry Audit
 
-During model evaluation, our pipeline executed **5-Fold Time-Series Cross-Validation (`TimeSeriesSplit`)** and **GridSearchCV Hyperparameter Tuning** (optimizing Ridge `alpha` and tree constraints) inside isolated pipelines. We validated all estimators directly against a **Naive Persistence Baseline** (forecasting future AQI equals today's AQI):
+During training on **8,712 complete historical hourly records** (representing a full calendar year), all estimators were audited against the Naive Baseline:
+
 | Forecast Horizon | Model / Algorithm | Test RMSE | Test MAE | Test $R^2$ Score | Validation Status | Top SHAP Feature |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **1-Day Ahead**<br>`(target_aqi_1d)` | Tuned Ridge Regression | 17.77 | 14.95 | -0.61 | Underperformed | — |
@@ -64,7 +102,7 @@ During model evaluation, our pipeline executed **5-Fold Time-Series Cross-Valida
 ---
 
 ## 🇵🇰 Dropdown Selector Expansion
-We expanded the popular cities dropdown list in `app.py` to support dynamic one-click predictions for major Pakistani cities:
+Dynamic, one-click coordinates and timezone lookups are fully integrated for major metropolitan areas in Pakistan:
 *   **Karachi** (`lat: 24.8607`, `lon: 67.0011`)
 *   **Lahore** (`lat: 31.5204`, `lon: 74.3587`)
 *   **Islamabad** (`lat: 33.6844`, `lon: 73.0479`)
@@ -79,33 +117,31 @@ aqi_predictor/
 │
 ├── .github/
 │   └── workflows/
-│       └── pipeline.yml       # GitHub Actions workflow for schedules
+│       └── pipeline.yml       # GitHub Actions E2E hourly/daily schedule
 │
 ├── data/                      # Local storage for databases and model pickles
-│   ├── local_feature_store.db # SQLite feature store
+│   ├── local_feature_store.db # Local SQLite fallback database
 │   └── models/                # Saved trained model pickles and metadata
 │
-├── venv/                      # Local isolated Python virtual environment (ignored)
-├── .env                       # Local environment variables (ignored)
-├── .env.example               # Git-committed environment configurations template
-├── requirements.txt           # Python dependencies
 ├── config.py                  # Dual-store database adapter & configuration loader
 ├── data_loader.py             # Open-Meteo API ingestion client
-├── feature_pipeline.py        # Hourly feature processor
-├── backfill.py                # Script to populate Feature Store with historical data
-├── training_pipeline.py       # Refactored pipeline model trainer, evaluator, and SHAP logger
-├── check_data.py              # Local ASCII data quality audit script
-└── app.py                     # Premium Streamlit web application
+├── feature_pipeline.py        # Hourly feature processor & streamer
+├── backfill.py                # Populates Feature Store with historical data
+├── training_pipeline.py       # Pipeline model trainer, evaluator, & SHAP explainer
+├── check_data.py              # Ingested data quality audit script
+├── app.py                     # Premium Streamlit web application
+├── runtime.txt                # Pins Python environment to 3.11
+└── requirements.txt           # Python dependency manifest
 ```
 
 ---
 
-## ⚡ Getting Started (Local Run)
+## ⚡ Getting Started (Local Development)
 
-All execution steps must be run inside our isolated virtual environment (`venv`) to keep your system clean:
+All execution steps must be run inside our isolated virtual environment (`venv`):
 
 ### 1. Initialize Virtual Environment & Install Dependencies
-Ensure you have Python 3.8+ installed, then run the environment creation and dependency setup:
+Ensure you have Python 3.8+ installed, then run:
 ```bash
 # Create the virtual environment
 python -m venv venv
@@ -120,28 +156,28 @@ Create your `.env` file by copying the template:
 ```bash
 copy .env.example .env
 ```
-Default city variables are pre-configured. To use the cloud feature store, add your `HOPSWORKS_API_KEY`. If left blank, SQLite mode is automatically activated!
+Add your optional `HOPSWORKS_API_KEY`. If left blank, SQLite mode is automatically activated!
 
 ### 3. Backfill Historical Data
-Populate your local SQLite database with 365 days of hourly air quality records:
+Populate your Feature Store with 365 days of hourly air quality records:
 ```bash
 .\venv\Scripts\python backfill.py
 ```
 
-### 4. Audit Your Ingestion Data
+### 4. Audit Your Ingested Data
 Check the statistics and data quality of your local Feature Store:
 ```bash
 .\venv\Scripts\python check_data.py
 ```
 
 ### 5. Train & Evaluate Models
-Train Ridge, Random Forest, HistGradientBoosting, and ensembled VotingRegressor models inside leak-free pipelines, calculate SHAP importances, and register the best models:
+Train candidates, compute SHAP importances, and register the best models:
 ```bash
 .\venv\Scripts\python training_pipeline.py
 ```
 
-### 6. Launch the Premium Dashboard
-Start your local Streamlit server to interact with the visualizations:
+### 6. Launch the Dashboard
+Start your local Streamlit server:
 ```bash
 .\venv\Scripts\streamlit run app.py
 ```
