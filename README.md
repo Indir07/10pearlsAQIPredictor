@@ -2,7 +2,7 @@
 
 An end-to-end, production-grade, serverless machine learning pipeline that forecasts the **Air Quality Index (AQI) up to 3 days (72 hours) in advance** for any city globally. The architecture seamlessly shifts between a **Hopsworks Cloud Feature Store** (fully serverless) and a **local SQLite fallback store**, making it incredibly robust and 100% executable out of the box.
 
-👉 **Deployed Dashboard**: [Streamlit Cloud Live App](https://10pearlsaqipredictor-bgeuixmbnirzwyzmyzb3sf.streamlit.app/)
+👉 **Deployed Dashboard**: [Streamlit Cloud Live App](https://10pearlsaqipredictor.streamlit.app/)
 👉 **Hopsworks Registry**: [Cloud Models View](https://eu-west.cloud.hopsworks.ai:443/p/33049/models/aqi_prediction_models/2)
 
 ---
