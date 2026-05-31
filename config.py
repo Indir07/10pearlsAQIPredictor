@@ -241,6 +241,7 @@ class FeatureStoreAdapter:
                     
                 # In Hopsworks python SDK, metrics are stored in the training_metrics attribute of the Model object
                 raw_metrics = getattr(hw_model, "training_metrics", {}) or {}
+                print("RAW METRICS FROM HOPSWORKS REGISTRY:", raw_metrics)
                 
                 # Reconstruct the nested metrics dictionary for the Streamlit dashboard
                 metrics = {}
