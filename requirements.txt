@@ -7,4 +7,4 @@ python-dotenv>=1.0.0
 shap>=0.41.0
 matplotlib>=3.5.0
 plotly>=5.9.0
-hopsworks>=3.0.0
+hopsworks>=4.8.0
