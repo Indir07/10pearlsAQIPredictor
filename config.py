@@ -247,15 +247,16 @@ class FeatureStoreAdapter:
                 metrics = {}
                 if raw_metrics:
                     for horizon in ["1d", "2d", "3d"]:
+                        # Hopsworks Model Registry may sanitize single underscores into double underscores
                         metrics[horizon] = {
                             "model_name": "Tuned HistGradientBoosting (LightGBM)",
-                            "rmse": float(raw_metrics.get(f"{horizon}_rmse", 0.0)),
-                            "mae": float(raw_metrics.get(f"{horizon}_mae", 0.0)),
-                            "r2": float(raw_metrics.get(f"{horizon}_r2", 0.0)),
+                            "rmse": float(raw_metrics.get(f"{horizon}__rmse", raw_metrics.get(f"{horizon}_rmse", 0.0))),
+                            "mae": float(raw_metrics.get(f"{horizon}__mae", raw_metrics.get(f"{horizon}_mae", 0.0))),
+                            "r2": float(raw_metrics.get(f"{horizon}__r2", raw_metrics.get(f"{horizon}_r2", 0.0))),
                             "naive_comparison": {
-                                "rmse": float(raw_metrics.get(f"{horizon}_naive_rmse", 0.0)),
-                                "mae": float(raw_metrics.get(f"{horizon}_naive_mae", 0.0)),
-                                "r2": float(raw_metrics.get(f"{horizon}_naive_r2", 0.0))
+                                "rmse": float(raw_metrics.get(f"{horizon}__naive_rmse", raw_metrics.get(f"{horizon}_naive_rmse", 0.0))),
+                                "mae": float(raw_metrics.get(f"{horizon}__naive_mae", raw_metrics.get(f"{horizon}_naive_mae", 0.0))),
+                                "r2": float(raw_metrics.get(f"{horizon}__naive_r2", raw_metrics.get(f"{horizon}_naive_r2", 0.0)))
                             }
                         }
                     
