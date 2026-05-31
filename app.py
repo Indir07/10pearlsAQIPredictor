@@ -149,7 +149,14 @@ if models_payload is not None:
     # Render metrics in sidebar
     st.sidebar.markdown("**Validation Performance (R²):**")
     for key, metric in mr_metrics.items():
-        st.sidebar.write(f"- **{key} Ahead:** R² = {metric.get('r2', 0.0):.2f}")
+        st.sidebar.markdown(f"**📍 {key} Forecast Horizon**")
+        st.sidebar.write(f"- **Alg:** `{metric.get('model_name', 'Tuned ML')}`")
+        st.sidebar.write(f"- **Model R²:** `{metric.get('r2', 0.0):.2f}`")
+        
+        # Display baseline comparison if available
+        naive = metric.get('naive_comparison', {})
+        if naive:
+            st.sidebar.write(f"- **Naive R²:** `{naive.get('r2', 0.0):.2f}`")
 else:
     st.sidebar.warning("⚠️ No trained models found in Registry.")
     st.sidebar.info("Using baseline Open-Meteo physical forecast models.")
