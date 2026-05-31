@@ -108,3 +108,57 @@ def run_training_pipeline():
         all_metrics[horizon] = {
             "model_name": best_model_name,
             **best_model_metrics
+        }
+        
+        # 3. Calculate SHAP Explanations for the best model
+        # To keep it fast, we use a sample of 100 test rows
+        try:
+            print(f"  Calculating SHAP explanations for {best_model_name}...")
+            sample_X = X_test.sample(min(100, len(X_test)), random_state=42)
+            
+            # Define explainer
+            if "Forest" in best_model_name or "Boosting" in best_model_name:
+                explainer = shap.TreeExplainer(best_model)
+                shap_values = explainer.shap_values(sample_X)
+            else:
+                # Linear/Kernel Explainer for Ridge
+                explainer = shap.Explainer(best_model.predict, sample_X)
+                shap_values = explainer(sample_X).values
+                
+            # Compute mean absolute SHAP values per feature for dashboard visualization
+            # If multi-output or different shape, handle appropriately
+            if isinstance(shap_values, list):
+                # Class list (sometimes happens in tree algorithms, let's take index 0 or average)
+                mean_shap = np.mean([np.abs(sv).mean(axis=0) for sv in shap_values], axis=0)
+            else:
+                mean_shap = np.abs(shap_values).mean(axis=0)
+                
+            # Create feature ranking dictionary
+            feat_imp = dict(zip(FEATURE_COLS, [float(x) for x in mean_shap]))
+            # Sort by importance
+            feat_imp = dict(sorted(feat_imp.items(), key=lambda item: item[1], reverse=True))
+            shap_importances[horizon] = feat_imp
+            print(f"  SHAP Calculations successful. Top feature: {list(feat_imp.keys())[0]}")
+        except Exception as e:
+            print(f"  Warning: Failed to calculate SHAP: {e}")
+            shap_importances[horizon] = {}
+
+    # Pack models and precalculated SHAP importances
+    payload = {
+        "models": best_models,
+        "shap_importances": shap_importances,
+        "feature_cols": FEATURE_COLS
+    }
+    
+    # 4. Save models and metrics to Model Registry
+    FeatureStoreAdapter.save_model(
+        models=payload,
+        model_name="aqi_prediction_models",
+        metrics=all_metrics
+    )
+    
+    print("\n=== Model Training & Registry Run Completed Successfully! ===")
+
+
+if __name__ == "__main__":
+    run_training_pipeline()
